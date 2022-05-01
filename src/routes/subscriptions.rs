@@ -10,26 +10,41 @@ pub struct SubscribeInput {
     name: String,
 }
 
+#[tracing::instrument(
+    name = "Adding a new subscriber",
+    skip(form, conn),
+    fields(
+    subscriber_email = %form.email,
+    subscriber_name= %form.name
+    )
+    )]
 pub async fn subscribe(form: web::Form<SubscribeInput>, conn: web::Data<PgPool>) -> HttpResponse {
-    match sqlx::query!(
+    match insert_subscriber(&conn, &form).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+#[tracing::instrument(
+    name = "Saving new subscriber details in the database",
+    skip(form, pool)
+)]
+pub async fn insert_subscriber(pool: &PgPool, form: &SubscribeInput) -> Result<(), sqlx::Error> {
+    sqlx::query!(
         r#"
-        INSERT INTO subscriptions (id, email, name, subscribed_at)
-        VALUES ($1, $2, $3, $4)
-        "#,
+    INSERT INTO subscriptions (id, email, name, subscribed_at)
+    VALUES ($1, $2, $3, $4)
+    "#,
         Uuid::new_v4(),
         form.email,
         form.name,
         Utc::now()
     )
-    // We use `get_ref` to get an immutable reference to the `PgConnection`
-    // wrapped by `web::Data`.
-    .execute(conn.get_ref())
+    .execute(pool)
     .await
-    {
-        Ok(_) => HttpResponse::Ok().finish(),
-        Err(e) => {
-            println!("Failed to execute query: {}", e);
-            HttpResponse::InternalServerError().finish()
-        }
-    }
+    .map_err(|e| {
+        tracing::error!("Failed to execute query: {:?}", e);
+        e
+    })?;
+    Ok(())
 }
